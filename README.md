@@ -5,7 +5,7 @@ Render `.md` files as styled HTML in your browser. Double-click any `.md` file a
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USER/md-viewer.git
+git clone https://github.com/paumkim/md-viewer.git
 cd md-viewer
 ./install.sh
 ```
