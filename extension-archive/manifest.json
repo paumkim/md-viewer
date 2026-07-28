@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Markdown Viewer",
+  "version": "1.2",
+  "description": "Renders .md files as styled HTML.",
+  "icons": {
+    "48": "icons/icon.svg"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mdviewer@pauk"
+    }
+  },
+  "permissions": ["tabs"],
+  "host_permissions": ["file:///*/*"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "Render this page as Markdown"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "file:///*",
+        "file:///*/*",
+        "file:///*/*/*",
+        "file:///*/*/*/*",
+        "file:///*/*/*/*/*",
+        "file:///*/*/*/*/*/*"
+      ],
+      "js": ["marked.min.js", "content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

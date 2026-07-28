@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Markdown Viewer
+Comment=Render .md files as styled HTML in Firefox
+Exec=md2html %f
+Terminal=false
+Type=Application
+MimeType=text/markdown;text/x-markdown;
+Categories=Viewer;
+StartupNotify=false
