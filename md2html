@@ -7,7 +7,7 @@ Usage:
   md2html --stdout file.md     # Print HTML to stdout (pipe, redirect)
   md2html --help               # Show this help
 """
-import sys, pathlib, subprocess, argparse
+import sys, pathlib, subprocess, argparse, re, shutil
 from markdown import markdown as md_convert
 
 STYLE = """
@@ -16,6 +16,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   max-width: 820px; margin: 40px auto; padding: 0 20px;
   line-height: 1.6; color: #1f2328; background: #fff;
+  transition: background 0.3s, color 0.3s;
 }
 pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; margin: 16px 0; }
 code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
@@ -32,36 +33,175 @@ a { color: #0969da; }
 ul, ol { padding-left: 24px; margin: 16px 0; }
 li { margin: 4px 0; }
 hr { border: none; border-top: 1px solid #d0d7de; margin: 24px 0; }
+
+/* Dark mode — auto-detect */
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) {
+    color: #c9d1d9; background: #0d1117;
+  }
+  body:not(.light-mode) pre { background: #161b22; }
+  body:not(.light-mode) code { background: #161b22; }
+  body:not(.light-mode) th { background: #161b22; }
+  body:not(.light-mode) blockquote { border-color: #484f58; color: #8b949e; }
+  body:not(.light-mode) h1, body:not(.light-mode) h2, body:not(.light-mode) h3 { border-color: #30363d; }
+  body:not(.light-mode) hr { border-color: #30363d; }
+  body:not(.light-mode) th, body:not(.light-mode) td { border-color: #30363d; }
+  body:not(.light-mode) a { color: #58a6ff; }
+}
+
+/* Dark mode — manual toggle */
+body.dark-mode {
+  color: #c9d1d9; background: #0d1117;
+}
+body.dark-mode pre { background: #161b22; }
+body.dark-mode code { background: #161b22; }
+body.dark-mode th { background: #161b22; }
+body.dark-mode blockquote { border-color: #484f58; color: #8b949e; }
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3 { border-color: #30363d; }
+body.dark-mode hr { border-color: #30363d; }
+body.dark-mode th, body.dark-mode td { border-color: #30363d; }
+body.dark-mode a { color: #58a6ff; }
+
+/* Light mode override */
+body.light-mode {
+  color: #1f2328; background: #fff;
+}
+body.light-mode pre { background: #f6f8fa; }
+body.light-mode code { background: #f6f8fa; }
+body.light-mode th { background: #f6f8fa; }
+body.light-mode blockquote { border-color: #d0d7de; color: #656d76; }
+body.light-mode h1, body.light-mode h2, body.light-mode h3 { border-color: #d0d7de; }
+body.light-mode hr { border-color: #d0d7de; }
+body.light-mode th, body.light-mode td { border-color: #d0d7de; }
+body.light-mode a { color: #0969da; }
+
+/* Toggle button */
+#theme-toggle {
+  position: fixed; top: 12px; right: 12px; z-index: 100;
+  background: #f0f3f6; border: 1px solid #d0d7de; border-radius: 20px;
+  padding: 6px 14px; font-size: 13px; cursor: pointer;
+  color: #1f2328; transition: background 0.2s, border-color 0.2s;
+}
+#theme-toggle:hover { background: #d0d7de; }
+body.dark-mode #theme-toggle {
+  background: #21262d; border-color: #30363d; color: #c9d1d9;
+}
+body.dark-mode #theme-toggle:hover { background: #30363d; }
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) #theme-toggle {
+    background: #21262d; border-color: #30363d; color: #c9d1d9;
+  }
+  body:not(.light-mode) #theme-toggle:hover {
+    background: #30363d;
+  }
+}
 """
 
-def render(md_path):
+THEME_TOGGLE_JS = """
+<script>
+(function(){
+  var btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    var body = document.body;
+    if (body.classList.contains('dark-mode')) {
+      body.classList.remove('dark-mode');
+      body.classList.add('light-mode');
+      localStorage.setItem('md-viewer-theme', 'light');
+    } else {
+      body.classList.remove('light-mode');
+      body.classList.add('dark-mode');
+      localStorage.setItem('md-viewer-theme', 'dark');
+    }
+  });
+  // Restore saved preference
+  var saved = localStorage.getItem('md-viewer-theme');
+  if (saved === 'dark') {
+    document.body.classList.add('dark-mode');
+  } else if (saved === 'light') {
+    document.body.classList.add('light-mode');
+  }
+})();
+</script>"""
+
+def _copy_images(html, md_path, output_dir):
+    """Find relative image references in HTML, copy images to output_dir, rewrite src paths."""
+    md_dir = md_path.parent.resolve()
+    img_pattern = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
+    copied = {}
+
+    for match in img_pattern.finditer(html):
+        src = match.group(1)
+        # Skip absolute URLs, data URIs, and already-copied paths
+        if src.startswith(('http://', 'https://', 'data:', '#')):
+            continue
+        if src in copied:
+            continue
+
+        img_path = (md_dir / src).resolve()
+        if not img_path.exists():
+            continue
+
+        # Copy image to output dir, preserving filename (dedupe if needed)
+        dest_name = img_path.name
+        dest_path = output_dir / dest_name
+        counter = 1
+        while dest_path.exists() and dest_path.resolve() != img_path:
+            stem = img_path.stem
+            ext = img_path.suffix
+            dest_path = output_dir / f"{stem}_{counter}{ext}"
+            counter += 1
+
+        shutil.copy2(img_path, dest_path)
+        copied[src] = dest_path.name
+
+    # Rewrite src attributes in HTML
+    for old_src, new_name in copied.items():
+        html = html.replace(f'src="{old_src}"', f'src="{new_name}"')
+
+    return html
+
+
+def render(md_path, *, dark_mode=False):
     """Convert .md file to HTML string."""
     md_text = md_path.read_text(encoding="utf-8")
     html_body = md_convert(md_text, extensions=["extra", "codehilite", "tables", "fenced_code"])
     title = md_path.stem.replace("-", " ").replace("_", " ").title()
 
-    return f"""<!DOCTYPE html>
+    # Determine initial theme class
+    if dark_mode:
+        theme_class = ' class="dark-mode"'
+    else:
+        theme_class = ""
+
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="light dark">
 <title>{title}</title>
 <style>{STYLE}</style>
 </head>
-<body>
+<body{theme_class}>
+<button id="theme-toggle" title="Toggle dark/light mode">🌓</button>
 {html_body}
+{THEME_TOGGLE_JS}
 </body>
 </html>"""
+
+    return html
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Convert a .md file to styled HTML and open in Firefox.",
-        usage="%(prog)s [--stdout] file.md"
+        usage="%(prog)s [--stdout] [--dark] file.md"
     )
     parser.add_argument("file", nargs="?", help="Path to the .md file")
     parser.add_argument("--stdout", "-o", action="store_true",
                         help="Print HTML to stdout instead of opening Firefox")
+    parser.add_argument("--dark", action="store_true",
+                        help="Start in dark mode")
     args = parser.parse_args()
 
     if not args.file:
@@ -73,15 +213,20 @@ def main():
         print(f"Error: file not found: {md_path}", file=sys.stderr)
         sys.exit(1)
 
-    html = render(md_path)
+    html = render(md_path, dark_mode=args.dark)
 
     if args.stdout:
         sys.stdout.write(html)
         return
 
-    # Write to /tmp and open in Firefox
-    tmp_name = f"md_{md_path.stem}.html"
-    tmp_path = pathlib.Path("/tmp") / tmp_name
+    # Copy images referenced in the markdown to a temp dir alongside the HTML
+    tmp_name = f"md_{md_path.stem}"
+    tmp_dir = pathlib.Path("/tmp") / tmp_name
+    tmp_dir.mkdir(exist_ok=True)
+    html = _copy_images(html, md_path, tmp_dir)
+
+    # Write HTML to temp dir and open in Firefox
+    tmp_path = tmp_dir / "index.html"
     tmp_path.write_text(html, encoding="utf-8")
 
     # Find a suitable browser

@@ -1,6 +1,6 @@
 # md-viewer
 
-Render `.md` files as styled HTML in your browser. Double-click any `.md` file and it opens in Firefox looking like GitHub-flavored Markdown — clean, readable, no clutter.
+Render `.md` files as styled HTML in your browser. Double-click any `.md` file and it opens in Firefox looking like GitHub-flavored Markdown — clean, readable, no clutter. Supports **dark mode** (auto-detected from your system preference, with a manual toggle) and **inline images** (images referenced in the markdown are copied alongside the HTML so they render correctly from the temp directory).
 
 ## Quick Start
 
@@ -17,6 +17,7 @@ Then double-click any `.md` file — it opens in Firefox, rendered as HTML.
 ```
 md2html file.md              # Convert and open in Firefox
 md2html --stdout file.md     # Print HTML to stdout (pipe, redirect)
+md2html --dark file.md       # Open in dark mode
 md2html --help               # Show help
 ```
 
@@ -37,8 +38,10 @@ md2html --stdout report.md | xclip -selection clipboard
 
 1. You open a `.md` file (double-click in file manager, or `md2html file.md`)
 2. The script converts markdown to HTML using Python's `markdown` library
-3. A temporary HTML file is written to `/tmp/md_<name>.html`
-4. Firefox opens the temp file with GitHub-style styling
+3. Images referenced in the markdown are copied to a temp directory alongside the HTML so they render correctly
+4. A temporary HTML file is written to `/tmp/md_<name>/index.html`
+5. Firefox opens the temp file with GitHub-style styling
+6. Dark mode is auto-detected via your system preference — click the 🌓 button to toggle manually
 
 No browser extensions, no internet, no configuration.
 
