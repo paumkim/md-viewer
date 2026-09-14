@@ -8,7 +8,6 @@ Usage:
   md2html --help               # Show this help
 """
 import sys, pathlib, subprocess, argparse, re, shutil
-from markdown import markdown as md_convert
 
 STYLE = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -124,48 +123,66 @@ THEME_TOGGLE_JS = """
 })();
 </script>"""
 
+_IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
+_FENCE_RE = re.compile(r'^( {0,3})(`{3,}|~{3,})', re.MULTILINE)
+_INDENT_CODE_RE = re.compile(r'^(?:    |\t)', re.MULTILINE)
+
+
+def _has_code_blocks(md_text):
+    """Return True if the markdown looks like it contains code blocks.
+
+    Fenced code (``` or ~~~) is detected reliably. Indented code is detected
+    with a conservative 4-space/tab heuristic so we never disable highlighting
+    on a doc that has real code (visual regression is the priority here).
+    """
+    if _FENCE_RE.search(md_text):
+        return True
+    return bool(_INDENT_CODE_RE.search(md_text))
+
+
 def _copy_images(html, md_path, output_dir):
     """Find relative image references in HTML, copy images to output_dir, rewrite src paths."""
     md_dir = md_path.parent.resolve()
-    img_pattern = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
     copied = {}
 
-    for match in img_pattern.finditer(html):
+    def _replace(match):
         src = match.group(1)
-        # Skip absolute URLs, data URIs, and already-copied paths
+        # Skip absolute URLs, data URIs, and anchor links
         if src.startswith(('http://', 'https://', 'data:', '#')):
-            continue
+            return match.group(0)
         if src in copied:
-            continue
+            return f'src="{copied[src]}"'
 
         img_path = (md_dir / src).resolve()
         if not img_path.exists():
-            continue
+            return match.group(0)
 
         # Copy image to output dir, preserving filename (dedupe if needed)
-        dest_name = img_path.name
-        dest_path = output_dir / dest_name
+        dest_path = output_dir / img_path.name
         counter = 1
-        while dest_path.exists() and dest_path.resolve() != img_path:
-            stem = img_path.stem
-            ext = img_path.suffix
-            dest_path = output_dir / f"{stem}_{counter}{ext}"
+        while dest_path.exists() and dest_path != img_path:
+            dest_path = output_dir / f"{img_path.stem}_{counter}{img_path.suffix}"
             counter += 1
 
         shutil.copy2(img_path, dest_path)
         copied[src] = dest_path.name
+        return f'src="{dest_path.name}"'
 
-    # Rewrite src attributes in HTML
-    for old_src, new_name in copied.items():
-        html = html.replace(f'src="{old_src}"', f'src="{new_name}"')
-
-    return html
+    # Fast path: no <img tags at all — skip the regex entirely
+    if "<img" not in html:
+        return html
+    return _IMG_SRC_RE.sub(_replace, html)
 
 
 def render(md_path, *, dark_mode=False):
     """Convert .md file to HTML string."""
+    from markdown import markdown as md_convert
+
     md_text = md_path.read_text(encoding="utf-8")
-    html_body = md_convert(md_text, extensions=["extra", "codehilite", "tables", "fenced_code"])
+    extensions = ["extra", "tables", "fenced_code"]
+    if _has_code_blocks(md_text):
+        extensions = ["extra", "codehilite", "tables", "fenced_code"]
+    html_body = md_convert(md_text, extensions=extensions)
     title = md_path.stem.replace("-", " ").replace("_", " ").title()
 
     # Determine initial theme class
